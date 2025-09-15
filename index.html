@@ -106,4 +106,159 @@
                   React.createElement('th',{className:'p-2 text-left'},'Name'),
                   React.createElement('th',{className:'p-2'},'Off'),
                   React.createElement('th',{className:'p-2'},'Def'),
-                  React.createElement('th',{className
+                  React.createElement('th',{className:'p-2'},'Status'),
+                  React.createElement('th',{className:'p-2 text-left'},'Notes'),
+                  React.createElement('th',{className:'p-2'})
+                )
+              ),
+              React.createElement('tbody',null,
+                roster.map((p,i)=> React.createElement('tr',{key:i,className:'border-t'},
+                  React.createElement('td',{className:'p-2 font-medium'},p.name),
+                  React.createElement('td',{className:'p-2 text-center'},p.off),
+                  React.createElement('td',{className:'p-2 text-center'},p.def),
+                  React.createElement('td',{className:'p-2 text-center'},p.status||'ACTIVE'),
+                  React.createElement('td',{className:'p-2'},p.notes),
+                  React.createElement('td',{className:'p-2 text-right'},
+                    React.createElement('button',{className:'px-2 py-1 text-red-600',onClick:()=>del(i)},'Delete')
+                  )
+                ))
+              )
+            )
+          ),
+          React.createElement('div',{className:'flex gap-2'},
+            React.createElement('button',{className:'border rounded px-3 py-2',onClick:downloadCSV},'Export CSV'),
+            React.createElement('button',{className:'border rounded px-3 py-2',onClick:pickCSV},'Import CSV'),
+            React.createElement('input',{ref:importRef,type:'file',accept:'.csv',className:'hidden',onChange:importCSV}),
+            React.createElement('button',{className:'border rounded px-3 py-2',onClick:()=>{localStorage.removeItem(key('roster')); setRoster([]);}},'Clear Stored')
+          )
+        )
+      );
+    }
+
+    function useBoard(packageMap, defaultKey, label){
+      const [pkg,setPkg]=useLocalState(`${label}_pkg`, defaultKey);
+      const [spots,setSpots]=useLocalState(`${label}_spots`,{}); // { spotId: {1:name,2:name}}
+      const layout = packageMap[pkg];
+      const reset=()=> setSpots({});
+      const setAt=(spotId,name,team=1)=> setSpots((s)=> ({...s, [spotId]:{...(s[spotId]||{}), [team]:name}}));
+      const swap=(a,b)=> setSpots((s)=>{ const na=clone(s[a]||{}); const nb=clone(s[b]||{}); return {...s,[a]:nb,[b]:na}; });
+      return { pkg,setPkg,layout,spots,setAt,reset,swap };
+    }
+
+    function Spot({ id, label, data, onDrop }){
+      const onDragOver = (e)=> e.preventDefault();
+      const handleDrop = (e)=>{ e.preventDefault(); const from=e.dataTransfer.getData('text/plain'); onDrop(from,id); };
+      const statusClass = (name)=>{
+        try { const roster = JSON.parse(localStorage.getItem(key('roster')))||[]; const p = roster.find(r=> r.name===name); const s = (p&&p.status)||'ACTIVE';
+          if (s==='ACTIVE') return '';
+          if (s==='QUESTIONABLE') return 'opacity-70';
+          return 'opacity-40 line-through';
+        } catch { return ''; }
+      };
+      const chip=(team)=> React.createElement('div',{draggable:true,onDragStart:(e)=> e.dataTransfer.setData('text/plain', id+':'+team), className:'chip mt-1 rounded-full px-3 py-1 text-sm font-medium shadow border bg-white cursor-grab '+statusClass(data?.[team])}, data?.[team]||'—');
+      return React.createElement('div',{onDragOver,onDrop:handleDrop,className:'spot rounded-2xl border p-3 shadow-sm bg-white/80 flex flex-col items-center justify-center'},
+        React.createElement('div',{className:'text-[10px] uppercase tracking-wide opacity-60'},label),
+        chip(1), React.createElement('div',{className:'text-[10px] opacity-60 mt-1'},'2nd'), chip(2)
+      );
+    }
+
+    function BoardView({ title, board, packageMap }){
+      const { pkg,setPkg,layout,spots,setAt,reset,swap } = board;
+      const [assignName,setAssignName]=useState("");
+      const onDrop=(from,to)=>{ if(!from) return; if(!from.includes(':')){ setAt(to, from, 1); return;} const [a,team]=from.split(':'); if(a===to) return; swap(a,to); };
+      const exportJSON=()=>{ const data={pkg,spots}; const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`${title}_${pkg}.json`; a.click(); URL.revokeObjectURL(url); };
+      const copyJSON=()=> navigator.clipboard.writeText(JSON.stringify({pkg,spots},null,2)).catch(()=>{});
+      return (
+        React.createElement('div',{className:'space-y-3'},
+          React.createElement('div',{className:'flex flex-wrap gap-2 items-center no-print'},
+            React.createElement('label',null,'Package:'),
+            React.createElement('select',{className:'border rounded px-2 py-1',value:pkg,onChange:e=>setPkg(e.target.value)},
+              Object.keys(packageMap).map(k=> React.createElement('option',{key:k,value:k},k))
+            ),
+            React.createElement('button',{className:'border rounded px-3 py-1',onClick:reset},'Reset Spots'),
+            React.createElement('button',{className:'border rounded px-3 py-1',onClick:exportJSON},'Export JSON'),
+            React.createElement('button',{className:'border rounded px-3 py-1',onClick:copyJSON},'Copy JSON'),
+            React.createElement('div',{className:'flex items-center gap-2 ml-auto'},
+              React.createElement('input',{className:'border rounded px-2 py-1',placeholder:'Quick assign name…',value:assignName,onChange:e=>setAssignName(e.target.value.toUpperCase())}),
+              React.createElement('div',{draggable:true,onDragStart:(e)=> e.dataTransfer.setData('text/plain', assignName),className:'chip border rounded-full px-3 py-1 bg-white cursor-grab'}, assignName||'(name)')
+            )
+          ),
+          React.createElement('div',{className:'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3'},
+            layout.map(id=> React.createElement(Spot,{key:id,id,label:spotLabels[id]||id,data:spots[id],onDrop}))
+          )
+        )
+      );
+    }
+
+    function Library({ kind, state }){
+      const [name,setName]=useState("");
+      const [lib,setLib]=useLocalState(`${kind}_library`, []);
+      const save=()=>{ if(!name.trim()) return; const entry={ name:name.trim(), data:{ pkg:state.pkg, spots:state.spots } }; setLib(L=>{ const i=L.findIndex(x=>x.name===entry.name); if(i>=0){ const c=clone(L); c[i]=entry; return c;} return [...L,entry]; }); };
+      const load=(e)=>{ state.setPkg(e.data.pkg); const s=e.data.spots||{}; Object.entries(s).forEach(([spot,t])=>{ if(t?.[1]) state.setAt(spot,t[1],1); if(t?.[2]) state.setAt(spot,t[2],2); }); };
+      const remove=(i)=> setLib(L=> L.filter((_,idx)=> idx!==i));
+      return React.createElement('div',{className:'space-y-2'},
+        React.createElement('div',{className:'flex gap-2 no-print'},
+          React.createElement('input',{className:'border rounded px-2 py-1 w-full',placeholder:`Name this ${kind} board (e.g., Week1‑vs‑Otsego)`,value:name,onChange:e=>setName(e.target.value)}),
+          React.createElement('button',{className:'bg-blue-600 text-white rounded px-3 py-1',onClick:save},'Save')
+        ),
+        React.createElement('div',{className:'grid md:grid-cols-2 gap-2'},
+          lib.map((e,i)=> React.createElement('div',{key:i,className:'border rounded-xl p-3 flex items-center justify-between'},
+            React.createElement('div',null,
+              React.createElement('div',{className:'font-medium'},e.name),
+              React.createElement('div',{className:'text-xs opacity-60'},`pkg: ${e.data.pkg} • spots: ${Object.keys(e.data.spots||{}).length}`)
+            ),
+            React.createElement('div',{className:'flex gap-2'},
+              React.createElement('button',{className:'border rounded px-2 py-1',onClick:()=>load(e)},'Load'),
+              React.createElement('button',{className:'text-red-600',onClick:()=>remove(i)},'Delete')
+            )
+          ))
+        )
+      );
+    }
+
+    function App(){
+      const [active,setActive]=useState('offense');
+      const [roster,setRoster]=useLocalState('roster', seedRoster);
+      const offBoard=useBoard(OFF_PACKAGES,'11','OFF');
+      const defBoard=useBoard(DEF_PACKAGES,'Base43','DEF');
+      const stBoard=useBoard(ST_PACKAGES,'Kickoff','ST');
+
+      const exportBundle=()=>{ const bundle={ roster, offense:{pkg:offBoard.pkg,spots:offBoard.spots}, defense:{pkg:defBoard.pkg,spots:defBoard.spots}, special:{pkg:stBoard.pkg,spots:stBoard.spots} }; const blob=new Blob([JSON.stringify(bundle,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='phs7_bundle.json'; a.click(); URL.revokeObjectURL(url); };
+
+      return (
+        React.createElement('div',{className:'space-y-6'},
+          React.createElement('header',{className:'flex items-center justify-between no-print'},
+            React.createElement('h1',{className:'text-2xl md:text-3xl font-semibold'},'Plainwell 7th — Roster & Situational Boards'),
+            React.createElement('div',{className:'flex gap-2'},
+              React.createElement('button',{className:'border rounded px-3 py-2',onClick:exportBundle},'Export Bundle'),
+              React.createElement('button',{className:'border rounded px-3 py-2',onClick:()=>window.print()},'Print')
+            )
+          ),
+          React.createElement('div',{className:'no-print flex gap-2 flex-wrap'},
+            ['offense','defense','special','roster'].map(t=> React.createElement('button',{key:t,onClick:()=>setActive(t),className:`rounded px-3 py-2 border ${active===t?'bg-blue-600 text-white':'bg-white'}`}, t[0].toUpperCase()+t.slice(1)))
+          ),
+          active==='offense' && React.createElement(React.Fragment,null,
+            React.createElement('h2',{className:'text-xl font-semibold -mb-2'},'Offense'),
+            React.createElement(BoardView,{title:'Offense',board:offBoard,packageMap:OFF_PACKAGES}),
+            React.createElement('div',{className:'mt-4'}, React.createElement(Library,{kind:'Offense',state:offBoard}))
+          ),
+          active==='defense' && React.createElement(React.Fragment,null,
+            React.createElement('h2',{className:'text-xl font-semibold -mb-2'},'Defense'),
+            React.createElement(BoardView,{title:'Defense',board:defBoard,packageMap:DEF_PACKAGES}),
+            React.createElement('div',{className:'mt-4'}, React.createElement(Library,{kind:'Defense',state:defBoard}))
+          ),
+          active==='special' && React.createElement(React.Fragment,null,
+            React.createElement('h2',{className:'text-xl font-semibold -mb-2'},'Special Teams'),
+            React.createElement(BoardView,{title:'Special Teams',board:stBoard,packageMap:ST_PACKAGES}),
+            React.createElement('div',{className:'mt-4'}, React.createElement(Library,{kind:'Special',state:stBoard}))
+          ),
+          active==='roster' && React.createElement(RosterTab,{roster,setRoster}),
+          React.createElement('footer',{className:'text-xs opacity-60'},'Tip: Drag a player chip to swap spots. Each spot tracks 1st & 2nd string. Status on the roster (Active/Questionable/Out/Academic/Suspended) changes chip appearance across all boards. All changes autosave to your browser.')
+        )
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(App));
+  </script>
+</body>
+</html>
