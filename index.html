@@ -8,7 +8,7 @@
   <!-- Tailwind (CDN) -->
   <script src="https://cdn.tailwindcss.com"></script>
 
-  <!-- React (CDN, production builds) -->
+  <!-- React (production) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
@@ -16,15 +16,14 @@
     @media print { .no-print { display:none } }
     .spot { min-height: 88px }
     .chip { user-select:none }
-    .click-armed .spot { outline: 2px dashed rgba(59,130,246,.5); outline-offset: -2px; }
     .spot:hover { background: rgba(59,130,246,.06) }
-    .diag-ok { background:#ecfdf5; color:#065f46; border:1px solid #10b981 }
-    .diag { padding:.5rem .75rem; margin:.5rem 0; border-radius:.5rem; font-size:.875rem }
+    .ring-sel { box-shadow: 0 0 0 2px rgba(59,130,246,.6) inset }
+    .diag { background:#ecfdf5; color:#065f46; border:1px solid #10b981; padding:.5rem .75rem; margin:.5rem 0; border-radius:.5rem; font-size:.875rem }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
   <div class="no-print max-w-6xl mx-auto px-4">
-    <div id="diag" class="diag diag-ok">Diagnostics: OK — App ready</div>
+    <div class="diag">Diagnostics: OK — App ready</div>
   </div>
 
   <div id="app" class="mx-auto max-w-6xl p-4 md:p-8"></div>
@@ -95,7 +94,7 @@
       return [val,setVal];
     }
 
-    // ----- Roster
+    // ----- Roster tab
     function RosterTab({ roster, setRoster }){
       const [name,setName]=useState(""); const [off,setOff]=useState(""); const [def,setDef]=useState("");
       const [notes,setNotes]=useState(""); const [status,setStatus]=useState("ACTIVE");
@@ -182,11 +181,10 @@
       return { pkg,setPkg,layout,spots,setAt,reset,swap };
     }
 
-    // ----- A single position tile
+    // ----- Position tile
     function Spot({ id, label, data, onDrop, onClick, isSelected }){
       const onDragOver = (e)=> e.preventDefault();
       const handleDrop = (e)=>{ e.preventDefault(); const from=e.dataTransfer.getData('text/plain'); onDrop(from,id); };
-
       const statusClass = (name)=>{
         try {
           const roster = JSON.parse(localStorage.getItem(key('roster')))||[];
@@ -197,26 +195,16 @@
           return 'opacity-40 line-through';
         } catch { return ''; }
       };
-
       const chip=(team)=> React.createElement(
         'div',
-        {
-          draggable:true,
-          onDragStart:(e)=> e.dataTransfer.setData('text/plain', id+':'+team),
-          className:'chip mt-1 rounded-full px-3 py-1 text-sm font-medium shadow border bg-white cursor-grab '+statusClass(data?.[team])
-        },
+        { draggable:true, onDragStart:(e)=> e.dataTransfer.setData('text/plain', id+':'+team),
+          className:'chip mt-1 rounded-full px-3 py-1 text-sm font-medium shadow border bg-white cursor-grab '+statusClass(data?.[team]) },
         data?.[team]||'—'
       );
-
       return React.createElement(
         'button',
-        {
-          type:'button',
-          onClick:()=> onClick?.(id),
-          onDragOver,
-          onDrop:handleDrop,
-          className:`spot rounded-2xl border p-3 shadow-sm bg-white/80 flex flex-col items-center justify-center w-full ${isSelected ? 'ring-2 ring-blue-400' : ''}`
-        },
+        { type:'button', onClick:()=> onClick?.(id), onDragOver, onDrop:handleDrop,
+          className:`spot rounded-2xl border p-3 shadow-sm bg-white/80 flex flex-col items-center justify-center w-full ${isSelected?'ring-sel':''}` },
         React.createElement('div',{className:'text-[10px] uppercase tracking-wide opacity-60'},label),
         chip(1),
         React.createElement('div',{className:'text-[10px] opacity-60 mt-1'},'2nd'),
@@ -224,170 +212,212 @@
       );
     }
 
-   <script>
-function BoardView({ title, board, packageMap, roster }){
-  const { pkg,setPkg,layout,spots,setAt,reset,swap } = board;
+    // ----- Board view with Assign + Auto-Fill
+    function BoardView({ title, board, packageMap, roster }){
+      const { pkg,setPkg,layout,spots,setAt,reset,swap } = board;
+      const [assignName,setAssignName]=useState("");
+      const [targetTeam,setTargetTeam]=useState(1);
+      const [selected,setSelected]=useState(null);
+      const [overwrite,setOverwrite]=useState(false);
 
-  const [assignName,setAssignName]=React.useState("");
-  const [targetTeam,setTargetTeam]=React.useState(1);      // 1 or 2
-  const [selected,setSelected]=React.useState(null);       // which tile is selected
-  const [overwrite,setOverwrite]=React.useState(false);    // allow overwriting existing chips when autofilling
+      const onDrop=(from,to)=>{
+        if(!from) return;
+        if(!from.includes(':')){ setAt(to, from.trim().toUpperCase(), 1); return;}
+        const [a]=from.split(':'); if(a===to) return; swap(a,to);
+      };
+      const onTileClick=(to)=> setSelected(to);
+      const doAssign = ()=>{
+        if(!selected){ alert('Click a position tile first.'); return; }
+        if(!assignName.trim()){ alert('Type or pick a player first.'); return; }
+        setAt(selected, assignName.trim().toUpperCase(), targetTeam);
+      };
 
-  const onDrop=(from,to)=>{
-    if(!from) return;
-    if(!from.includes(':')){ setAt(to, from.trim().toUpperCase(), 1); return;}
-    const [a,team]=from.split(':'); if(a===to) return; swap(a,to);
-  };
-
-  const onTileClick=(to)=> setSelected(to);
-
-  const doAssign = ()=>{
-    if(!selected){ alert('Click a position tile first.'); return; }
-    if(!assignName.trim()){ alert('Type or pick a player first.'); return; }
-    setAt(selected, assignName.trim().toUpperCase(), targetTeam);
-  };
-
-  // ---------- NEW: Auto-fill from roster Off/Def prefs ----------
-  function autoFillFromRoster(){
-    // Decide whether we use the roster's "off" or "def" field based on the board title
-    const prefKey = title.startsWith('Offense') ? 'off' : (title.startsWith('Defense') ? 'def' : null);
-    if (!prefKey) { alert('Auto-fill is for Offense/Defense boards.'); return; }
-
-    // Normalize helper
-    const norm = (s)=> String(s||'').trim().toUpperCase();
-
-    // Build candidate lists for each position: pos -> [names...]
-    const pool = {}; // { POS: [player...] }
-    (roster||[]).forEach(p=>{
-      const pos = norm(p[prefKey]);
-      if (!pos) return;
-      if (!pool[pos]) pool[pos]=[];
-      pool[pos].push(norm(p.name));
-    });
-
-    // Keep track of which players we’ve already used at 1st and 2nd string for fairness
-    const usedFirst = new Set();
-    const usedSecond = new Set();
-
-    // Helper to get next candidate for a position that isn't yet used for that team (1st or 2nd)
-    const nextCandidate = (pos, team)=>{
-      const list = pool[pos] || [];
-      for (const name of list) {
-        if (team===1 && !usedFirst.has(name)) return name;
-        if (team===2 && !usedSecond.has(name) && name !== (spots[pos]?.[1]||'')) return name;
-      }
-      return null;
-    };
-
-    // For each spot in the current formation layout, try to place 1st & 2nd string
-    layout.forEach(pos=>{
-      const posId = pos; // already in uppercase like "LT", "MIKE", "X", etc.
-
-      // If not overwriting and there’s already someone there, skip that team slot
-      const current1 = spots[posId]?.[1] || '';
-      const current2 = spots[posId]?.[2] || '';
-
-      // First string
-      if (overwrite || !current1) {
-        const c1 = nextCandidate(posId, 1);
-        if (c1) { setAt(posId, c1, 1); usedFirst.add(c1); }
-      } else if (current1) {
-        usedFirst.add(current1);
+      // Auto-fill starters and backups from roster prefs
+      function autoFillFromRoster(){
+        const prefKey = title.startsWith('Offense') ? 'off' : (title.startsWith('Defense') ? 'def' : null);
+        if (!prefKey) { alert('Auto-fill is for Offense/Defense boards.'); return; }
+        const norm = (s)=> String(s||'').trim().toUpperCase();
+        const pool = {}; // POS -> [names]
+        (roster||[]).forEach(p=>{
+          const pos = norm(p[prefKey]); if(!pos) return;
+          (pool[pos] = pool[pos] || []).push(norm(p.name));
+        });
+        const used1=new Set(), used2=new Set();
+        layout.forEach(pos=>{
+          const cur1 = spots[pos]?.[1] || '';
+          const cur2 = spots[pos]?.[2] || '';
+          if (overwrite || !cur1) {
+            const n1 = (pool[pos]||[]).find(n=>!used1.has(n));
+            if (n1){ setAt(pos,n1,1); used1.add(n1); }
+          } else used1.add(cur1);
+          if (overwrite || !cur2) {
+            const n2 = (pool[pos]||[]).find(n=>!used2.has(n) && n !== (spots[pos]?.[1]||''));
+            if (n2){ setAt(pos,n2,2); used2.add(n2); }
+          } else used2.add(cur2);
+        });
       }
 
-      // Second string (backup)
-      if (overwrite || !current2) {
-        const c2 = nextCandidate(posId, 2);
-        if (c2) { setAt(posId, c2, 2); usedSecond.add(c2); }
-      } else if (current2) {
-        usedSecond.add(current2);
-      }
-    });
+      const exportJSON=()=>{
+        const data={pkg,spots};
+        const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+        const url=URL.createObjectURL(blob); const a=document.createElement('a');
+        a.href=url; a.download=`${title}_${pkg}.json`; a.click(); URL.revokeObjectURL(url);
+      };
+      const copyJSON=()=> navigator.clipboard.writeText(JSON.stringify({pkg,spots},null,2)).catch(()=>{});
 
-    // Optional: try to fill any remaining empty second‑string slots with “nearest” extra matches
-    layout.forEach(posId=>{
-      const stillEmpty2 = !(spots[posId]?.[2]);
-      if (stillEmpty2) {
-        const list = pool[posId] || [];
-        // pick any roster name not used as 1st/2nd yet for this pos
-        const alt = list.find(n => !usedSecond.has(n) && n !== (spots[posId]?.[1]||''));
-        if (alt) { setAt(posId, alt, 2); usedSecond.add(alt); }
-      }
-    });
-  }
-  // ---------- END Auto-fill ----------
+      return (
+        React.createElement('div',{className:'space-y-3'},
+          // Toolbar
+          React.createElement('div',{className:'flex flex-wrap gap-2 items-center no-print w-full'},
+            React.createElement('label',{className:'font-medium'},'Package:'),
+            React.createElement('select',{className:'border rounded px-2 py-1',value:pkg,onChange:e=>setPkg(e.target.value)},
+              Object.keys(packageMap).map(k=> React.createElement('option',{key:k,value:k},k))
+            ),
 
-  const exportJSON=()=>{
-    const data={pkg,spots};
-    const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-    const url=URL.createObjectURL(blob); const a=document.createElement('a');
-    a.href=url; a.download=`${title}_${pkg}.json`; a.click(); URL.revokeObjectURL(url);
-  };
-  const copyJSON=()=> navigator.clipboard.writeText(JSON.stringify({pkg,spots},null,2)).catch(()=>{});
+            React.createElement('div',{className:'h-6 w-px bg-slate-300 mx-1'}),
 
-  return (
-    React.createElement('div',{className:'space-y-3'},
-      // Toolbar
-      React.createElement('div',{className:'flex flex-wrap gap-2 items-center no-print w-full'},
-        React.createElement('label',{className:'font-medium'},'Package:'),
-        React.createElement('select',{className:'border rounded px-2 py-1',value:pkg,onChange:e=>setPkg(e.target.value)},
-          Object.keys(packageMap).map(k=> React.createElement('option',{key:k,value:k},k))
-        ),
+            React.createElement('button',{className:'bg-emerald-600 text-white rounded px-3 py-1',onClick:autoFillFromRoster},'Auto‑Fill from Roster'),
+            React.createElement('label',{className:'flex items-center gap-1 text-sm'},
+              React.createElement('input',{type:'checkbox',checked:overwrite,onChange:e=>setOverwrite(e.target.checked)}),
+              'Overwrite existing'
+            ),
 
-        React.createElement('div',{className:'h-6 w-px bg-slate-300 mx-1'}),
+            React.createElement('div',{className:'h-6 w-px bg-slate-300 mx-1'}),
 
-        // NEW: Auto-fill button + overwrite toggle
-        React.createElement('button',{className:'bg-emerald-600 text-white rounded px-3 py-1',onClick:autoFillFromRoster},'Auto‑Fill from Roster'),
-        React.createElement('label',{className:'flex items-center gap-1 text-sm'},
-          React.createElement('input',{type:'checkbox',checked:overwrite,onChange:e=>setOverwrite(e.target.checked)}),
-          'Overwrite existing'
-        ),
+            React.createElement('label',{className:'font-medium'},'Assign:'),
+            React.createElement('select',{className:'border rounded px-2 py-1',value:targetTeam,onChange:e=>setTargetTeam(Number(e.target.value))},
+              [1,2].map(n => React.createElement('option',{key:n,value:n}, n===1?'1st string':'2nd string'))
+            ),
+            React.createElement('input',{
+              className:'border rounded px-2 py-1 min-w-[220px]',
+              placeholder:'Type player name…',
+              list:'rosterList',
+              value:assignName,
+              onChange:e=>setAssignName(e.target.value)
+            }),
+            React.createElement('datalist',{id:'rosterList'},
+              (roster||[]).map(p => React.createElement('option',{key:p.name, value:p.name}))
+            ),
+            React.createElement('div',{className:'text-sm'},'Selected: ',
+              React.createElement('span',{className:'font-medium'}, selected || '—')
+            ),
+            React.createElement('button',{className:'bg-blue-600 text-white rounded px-3 py-1',onClick:doAssign},'Assign'),
 
-        React.createElement('div',{className:'h-6 w-px bg-slate-300 mx-1'}),
+            React.createElement('div',{className:'ml-auto flex gap-2'},
+              React.createElement('button',{className:'border rounded px-3 py-1',onClick:reset},'Reset Board'),
+              React.createElement('button',{className:'border rounded px-3 py-1',onClick:exportJSON},'Export JSON'),
+              React.createElement('button',{className:'border rounded px-3 py-1',onClick:copyJSON},'Copy JSON')
+            )
+          ),
 
-        React.createElement('label',{className:'font-medium'},'Assign:'),
-        React.createElement('select',{className:'border rounded px-2 py-1',value:targetTeam,onChange:e=>setTargetTeam(Number(e.target.value))},
-          [1,2].map(n => React.createElement('option',{key:n,value:n}, n===1?'1st string':'2nd string'))
-        ),
-
-        // Autocomplete from roster
-        React.createElement('input',{
-          className:'border rounded px-2 py-1 min-w-[220px]',
-          placeholder:'Type player name…',
-          list:'rosterList',
-          value:assignName,
-          onChange:e=>setAssignName(e.target.value)
-        }),
-        React.createElement('datalist',{id:'rosterList'},
-          (roster||[]).map(p => React.createElement('option',{key:p.name, value:String(p.name||'')}))
-        ),
-
-        // Selected spot + Assign button
-        React.createElement('div',{className:'text-sm'},'Selected: ',
-          React.createElement('span',{className:'font-medium'}, selected || '—')
-        ),
-        React.createElement('button',{className:'bg-blue-600 text-white rounded px-3 py-1',onClick:doAssign},'Assign'),
-
-        React.createElement('div',{className:'ml-auto flex gap-2'},
-          React.createElement('button',{className:'border rounded px-3 py-1',onClick:reset},'Reset Board'),
-          React.createElement('button',{className:'border rounded px-3 py-1',onClick:exportJSON},'Export JSON'),
-          React.createElement('button',{className:'border rounded px-3 py-1',onClick:copyJSON},'Copy JSON')
+          // Grid
+          React.createElement('div',{className:'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3'},
+            layout.map(id=> React.createElement(Spot,{
+              key:id,
+              id,
+              label:spotLabels[id]||id,
+              data:spots[id],
+              onDrop,
+              onClick:to=>setSelected(to),
+              isSelected: selected===id
+            }))
+          )
         )
-      ),
+      );
+    }
 
-      // Grid
-      React.createElement('div',{className:'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3'},
-        layout.map(id=> React.createElement(Spot,{
-          key:id,
-          id,
-          label:spotLabels[id]||id,
-          data:spots[id],
-          onDrop,
-          onClick:onTileClick,
-          isSelected: selected===id
-        }))
-      )
-    )
-  );
-}
-</script>
+    // ----- Save/Load library
+    function Library({ kind, state }){
+      const [name,setName]=useState("");
+      const [lib,setLib]=useLocalState(`${kind}_library`, []);
+      const save=()=>{ if(!name.trim()) return;
+        const entry={ name:name.trim(), data:{ pkg:state.pkg, spots:state.spots } };
+        setLib(L=>{ const i=L.findIndex(x=>x.name===entry.name); if(i>=0){ const c=clone(L); c[i]=entry; return c;} return [...L,entry]; });
+      };
+      const load=(e)=>{ state.setPkg(e.data.pkg); const s=e.data.spots||{};
+        Object.entries(s).forEach(([spot,t])=>{ if(t?.[1]) state.setAt(spot,t[1],1); if(t?.[2]) state.setAt(spot,t[2],2); });
+      };
+      const remove=(i)=> setLib(L=> L.filter((_,idx)=> idx!==i));
+      return React.createElement('div',{className:'space-y-2'},
+        React.createElement('div',{className:'flex gap-2 no-print'},
+          React.createElement('input',{className:'border rounded px-2 py-1 w-full',placeholder:`Name this ${kind} board (e.g., Week1‑vs‑Otsego)`,value:name,onChange:e=>setName(e.target.value)}),
+          React.createElement('button',{className:'bg-blue-600 text-white rounded px-3 py-1',onClick:save},'Save')
+        ),
+        React.createElement('div',{className:'grid md:grid-cols-2 gap-2'},
+          lib.map((e,i)=> React.createElement('div',{key:i,className:'border rounded-xl p-3 flex items-center justify-between'},
+            React.createElement('div',null,
+              React.createElement('div',{className:'font-medium'},e.name),
+              React.createElement('div',{className:'text-xs opacity-60'},`pkg: ${e.data.pkg} • spots: ${Object.keys(e.data.spots||{}).length}`)
+            ),
+            React.createElement('div',{className:'flex gap-2'},
+              React.createElement('button',{className:'border rounded px-2 py-1',onClick:()=>load(e)},'Load'),
+              React.createElement('button',{className:'text-red-600',onClick:()=>remove(i)},'Delete')
+            )
+          ))
+        )
+      );
+    }
+
+    // ----- App shell
+    function App(){
+      const [active,setActive]=useState('offense');
+      const [roster,setRoster]=useLocalState('roster', seedRoster);
+      const offBoard=useBoard(OFF_PACKAGES,'11','OFF');
+      const defBoard=useBoard(DEF_PACKAGES,'Base43','DEF');
+      const stBoard=useBoard(ST_PACKAGES,'Kickoff','ST');
+
+      const exportBundle=()=>{
+        const bundle={
+          roster,
+          offense:{pkg:offBoard.pkg,spots:offBoard.spots},
+          defense:{pkg:defBoard.pkg,spots:defBoard.spots},
+          special:{pkg:stBoard.pkg,spots:stBoard.spots}
+        };
+        const blob=new Blob([JSON.stringify(bundle,null,2)],{type:'application/json'});
+        const url=URL.createObjectURL(blob); const a=document.createElement('a');
+        a.href=url; a.download='phs7_bundle.json'; a.click(); URL.revokeObjectURL(url);
+      };
+
+      return (
+        React.createElement('div',{className:'space-y-6'},
+          React.createElement('header',{className:'flex items-center justify-between no-print'},
+            React.createElement('h1',{className:'text-2xl md:text-3xl font-semibold'},'Plainwell 7th — Roster & Situational Boards'),
+            React.createElement('div',{className:'flex gap-2'},
+              React.createElement('button',{className:'border rounded px-3 py-2',onClick:exportBundle},'Export Bundle'),
+              React.createElement('button',{className:'border rounded px-3 py-2',onClick:()=>window.print()},'Print')
+            )
+          ),
+          React.createElement('div',{className:'no-print flex gap-2 flex-wrap'},
+            ['offense','defense','special','roster'].map(t=> React.createElement('button',{key:t,onClick:()=>setActive(t),className:`rounded px-3 py-2 border ${active===t?'bg-blue-600 text-white':'bg-white'}`}, t[0].toUpperCase()+t.slice(1)))
+          ),
+          active==='offense' && React.createElement(React.Fragment,null,
+            React.createElement('h2',{className:'text-xl font-semibold -mb-2'},'Offense'),
+            React.createElement(BoardView,{title:'Offense',board:offBoard,packageMap:OFF_PACKAGES, roster}),
+            React.createElement('div',{className:'mt-4'}, React.createElement(Library,{kind:'Offense',state:offBoard}))
+          ),
+          active==='defense' && React.createElement(React.Fragment,null,
+            React.createElement('h2',{className:'text-xl font-semibold -mb-2'},'Defense'),
+            React.createElement(BoardView,{title:'Defense',board:defBoard,packageMap:DEF_PACKAGES, roster}),
+            React.createElement('div',{className:'mt-4'}, React.createElement(Library,{kind:'Defense',state:defBoard}))
+          ),
+          active==='special' && React.createElement(React.Fragment,null,
+            React.createElement('h2',{className:'text-xl font-semibold -mb-2'},'Special Teams'),
+            React.createElement(BoardView,{title:'Special Teams',board:stBoard,packageMap:ST_PACKAGES, roster}),
+            React.createElement('div',{className:'mt-4'}, React.createElement(Library,{kind:'Special',state:stBoard}))
+          ),
+          active==='roster' && React.createElement(RosterTab,{roster,setRoster}),
+          React.createElement('footer',{className:'text-xs opacity-60'},'How to assign: Click a tile (it gets a blue ring). Type or pick a player, choose 1st/2nd, then click Assign. Or click “Auto‑Fill from Roster” on Offense/Defense to place starters & backups. Drag & drop and tile‑to‑tile swaps also work. Everything auto‑saves in your browser.')
+        )
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('app')).render(React.createElement(App));
+  </script>
+
+  <noscript>
+    <div class="diag" style="background:#fef2f2;color:#991b1b;border-color:#ef4444">
+      JavaScript is disabled in your browser. Enable it to use the roster & formations tool.
+    </div>
+  </noscript>
+</body>
+</html>
